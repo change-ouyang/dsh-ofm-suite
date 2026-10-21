@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Daily Check-in · OFM Check-in",
+    "description": "Manage daily check-in for 13 free channels inside DSH settings: see the check-in status and per-channel results, claim all or claim one channel, and toggle automatic check-in. The actual work is done by the local ofm-free-gateway, which exclusively owns the credentials."
+  }
+}

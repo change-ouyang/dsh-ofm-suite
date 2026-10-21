@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="OFM Check-in">
+  <defs>
+    <linearGradient id="ofmc-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2B6CB0"/>
+      <stop offset="100%" stop-color="#1A4E8A"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#ofmc-bg)"/>
+  <!-- 日历 -->
+  <rect x="52" y="60" width="152" height="136" rx="16" fill="#FFFFFF" opacity="0.96"/>
+  <rect x="52" y="60" width="152" height="36" rx="16" fill="#1A4E8A"/>
+  <rect x="52" y="84" width="152" height="12" fill="#1A4E8A"/>
+  <rect x="84" y="42" width="14" height="34" rx="7" fill="#E2E8F0"/>
+  <rect x="158" y="42" width="14" height="34" rx="7" fill="#E2E8F0"/>
+  <!-- 对勾 -->
+  <path d="M82 140 L112 170 L176 112" fill="none" stroke="#2F855A" stroke-width="20"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

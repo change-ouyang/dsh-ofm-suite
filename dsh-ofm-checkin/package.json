@@ -1,0 +1,53 @@
+{
+  "name": "dsh-ofm-checkin",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "DSH 界面里的「每日签到」页面：显示签到状态与逐渠道结果、一键领取、单渠道领取、开关。执行由本机 ofm-free-gateway 完成（凭证只由网关独占）。",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "checkin"
+  ],
+  "main": "./index.js",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/run-all.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/change-ouyang/dsh-ofm-suite.git"
+  },
+  "bugs": {
+    "url": "https://github.com/change-ouyang/dsh-ofm-suite/issues"
+  },
+  "homepage": "https://github.com/change-ouyang/dsh-ofm-suite#readme",
+  "author": "change-ouyang",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  }
+}

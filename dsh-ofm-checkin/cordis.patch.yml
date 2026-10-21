@@ -1,0 +1,24 @@
+# dsh-ofm-checkin bundle patch.
+#
+# 一行 insert 即挂载宿主半身;浏览器半身由 package.json 的 dsh.client 声明,
+# 并绑定在 name 为裸包名的这一行上(子路径行不会携带半身)。
+#
+# config 全部可省。各键的含义:
+#
+#   gatewayUrl      网关地址,默认 http://127.0.0.1:18900
+#   apiKey          网关密钥;不写则从 ~/.ofm-free-gateway/settings.json 的
+#                   forwardKey 读(所以密钥不必写在这里)
+#   dataDir         网关数据目录,默认 ~/.ofm-free-gateway
+#   startScript     网关启动脚本。**不写也能用** —— 宿主会按已知位置依次探测
+#                   (插件目录的兄弟目录 dsh-ofm-free-gateway\start.bat、
+#                    用户主目录下的同名目录,以及环境变量 OFM_GATEWAY_DIR),
+#                   取第一个存在的。换机器 / 换目录时写这个覆盖。
+#   startCommand    用命令行启动网关(优先于 startScript),经 shell 执行,
+#                   所以可以写成带参数的形式,例如:
+#                     startCommand: 'node server.mjs --checkin-at 08:30'
+#   startTimeoutMs  点「启动网关」后等网关应答的上限,默认 25000。
+#                   首次启动要加载 13 个渠道,机器慢就调大。
+- insert:
+    - id: ofm-checkin
+      name: 'dsh-ofm-checkin'
+      config: {}

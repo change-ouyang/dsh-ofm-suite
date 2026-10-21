@@ -1,0 +1,32 @@
+# ==========================================
+# 运行时数据 / 凭据：绝不入库
+#
+# 网关的凭据仓库（channel-credentials.json）与运行状态
+# 默认写在**仓库旁的** .ofm-free-gateway/ 目录，但若有人用
+# --data-dir . 把数据目录指到仓库里，这些忽略项就是最后一道防线。
+# ==========================================
+channel-credentials.json
+channel-credentials.json.bak-*
+settings.json
+channel-pack/
+gw.pid
+gw.out.log
+gw.err.log
+
+# 日志与临时物
+*.log
+*.pid
+*.out
+*.err
+*.tmp
+*.bak
+
+# 依赖
+node_modules/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp

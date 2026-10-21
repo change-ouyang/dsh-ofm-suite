@@ -1,0 +1,39 @@
+{
+  "name": "ofm-free-gateway",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "从 dsh-our-free-model 剥离出的 13 个免费渠道网关（OpenAI 兼容 API + 每日自动签到，无 dsh 依赖）",
+  "keywords": [
+    "openai-compatible",
+    "gateway",
+    "checkin",
+    "free-model"
+  ],
+  "main": "server.mjs",
+  "bin": {
+    "ofm-free-gateway": "server.mjs"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node server.mjs --no-refresh",
+    "checkin": "node scripts/checkin.mjs",
+    "checkin:run": "node scripts/checkin.mjs --run",
+    "test": "node test/run-all.mjs",
+    "test:unit": "node test/unit.test.mjs",
+    "test:http": "node test/http.test.mjs"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/change-ouyang/dsh-ofm-suite.git"
+  },
+  "bugs": {
+    "url": "https://github.com/change-ouyang/dsh-ofm-suite/issues"
+  },
+  "homepage": "https://github.com/change-ouyang/dsh-ofm-suite#readme",
+  "author": "change-ouyang",
+  "license": "MIT",
+  "dependencies": {}
+}
