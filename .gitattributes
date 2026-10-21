@@ -1,0 +1,28 @@
+# 行尾与二进制处理 —— 显式钉住,不依赖每个使用者的 core.autocrlf 设置。
+#
+# 为什么重要:本仓库有两个 Windows 批处理(start.bat / checkin-task.cmd /
+# run-inner.cmd / start-console.bat)。如果检出成 LF 行尾,批处理里的
+# goto/label 与多行块可能出错。所以这里强制它们用 CRLF ——
+# 仓库内部仍存 LF(便于 diff),检出时按下面的规则还原。
+
+# 默认:文本按内容识别,仓库内统一 LF
+* text=auto eol=lf
+
+# Windows 脚本:必须 CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.vbs  text eol=crlf
+
+# 二进制:绝不做行尾转换(做了就会损坏)
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.mp3   binary
+*.wav   binary
+*.wasm  binary
+*.zstd  binary
+*.zip   binary
+*.tgz   binary
