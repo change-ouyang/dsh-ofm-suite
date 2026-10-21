@@ -92,10 +92,7 @@ window.__ModuleLoader__.load({
        */
       rerunBlocked: '今天已签',
       rerunBlockedWhy: '渠道包按天去重:今天跑过之后整轮不再重复(实测点击 0 秒返回、状态不变)。想再试请用渠道卡片上的「一键领取」—— 它走的是另一条路,会真的请求上游。',
-      retryFailed: '重试失败的渠道',
-      retryFailedWhy: '整轮今天已跑过、不会重复;这个按钮逐渠道重新领取,只针对本轮失败的渠道。',
-      retryFailedDone: '重试完成:{summary}',
-      retryNone: '本轮没有失败的渠道,不需要重试。',
+      /** 「重试失败的渠道」按钮已移除:它唯一的失败项是凭据失效,重试注定再失败。 */
       /**
        * 按钮上的"领不了"文案。
        *
@@ -104,15 +101,21 @@ window.__ModuleLoader__.load({
        * 就是截图里「已开启」和「1 个未开启」并排出现的由来。
        */
       stateInactiveShort: '活动未开启',
-      stateUnsupportedShort: '不支持签到',
-      stateManualShort: '需手动签到',
+      /**
+       * 卡片上那行结局文字,统一成「活动未开启」后挂在 title 上的原话。
+       *
+       * 实测(逐渠道 credits.claimAll):zcode 回「今日暂无可领额度(服务端按日刷新)」、
+       * gemini/cline/raccoon/workbuddy 渠道包直接声明没有签到接口、minimax 的响应
+       * 已经没有有效的 claim_result —— 这些都是**上游把活动撤了或本来就没有**,
+       * 不是本机出错。原文照样留在悬停提示里,便于核对渠道包的措辞。
+       */
+      activityOffWhy: '这个渠道当前没有可领的签到活动(渠道包原话:{raw})—— 不是账号没连上,也不是本机操作失败。',
       claimWhyInactive: '这个渠道的签到活动没有开启(不是账号没连上)—— 到渠道自己的页面开启活动后再来领。',
       claimWhyUnsupported: '这个渠道的后端没有签到接口,领取请求不会发出去,点了也不会有结果。',
       claimWhyManual: '这个渠道需要在它自己的页面里手动签到,接口领不了。',
       claimWhyNoAccounts: '这个渠道还没有账号 —— 先点「添加账号」。',
       claimRetryHint: '这个渠道本轮有账号失败,点它会真的重新请求一次上游。',
       running: '签到中...',
-      refresh: '刷新',
       inFlight: '渠道正在跑',
       signedToday: '今天已签',
       last: '上次',
@@ -137,22 +140,25 @@ window.__ModuleLoader__.load({
       gwOfflineHint: '离线',
       gwStale: '宿主半身是旧版本(revision {revision},当前应为 {expected})—— 需要重启 DSH 才会加载新代码。',
       gwStaleTitle: '插件代码没生效',
-      // 模型列表同步(DSH 的模型列表是配置里的快照,不会自己跟着网关变)
-      routeSynced: 'DSH 模型列表已同步为 {count} 个模型 —— 重启 DSH 后模型选择器里才会变。',
+      /**
+       * 模型列表同步(DSH 的模型列表是配置里的快照,不会自己跟着网关变)。
+       *
+       * ⚠️ 但配置**改了就热应用** —— 实测 `cordis.patch.yml` 在 DSH 运行期间被改写后
+       * 模型选择器立刻跟着变,不需要重启(宿主半身 index.js 的注释里那句"DSH 只在
+       * 启动时读配置"是这条文案的旧来源,已按实测纠正)。
+       */
+      routeSynced: 'DSH 模型列表已同步为 {count} 个模型 —— 模型选择器里立刻就能选到,不用重启。',
       routeSyncedTitle: '模型列表已更新',
       routePending: '正在把模型列表同步到 DSH 配置...',
       routeFailed: '模型列表同步失败:{reason}',
       routeFailedTitle: '模型列表没同步',
       routeSyncNow: '立即同步',
       routeSyncing: '同步中...',
-      routeNever: '模型列表尚未同步过。改了模型启停后点「立即同步」,再重启 DSH。',
+      routeNever: '模型列表尚未同步过。改了模型启停后点「立即同步」即可,不用重启 DSH。',
       loadingStatus: '正在读取渠道状态...',
       // 渠道卡片
-      channels: '渠道',
-      channelsHint: '账号与模型都在这里管;卡片上的状态来自渠道包',
       refreshBalance: '刷新余额',
       balanceLoading: '查询中...',
-      total: '合计',
       addAccount: '添加账号',
       adding: '准备中...',
       refreshAccounts: '续期',
@@ -245,7 +251,7 @@ window.__ModuleLoader__.load({
      * 而不是让人对着旧行为怀疑自己改错了。宿主没上报 revision(旧版本)时按 null 处理,
      * 也就不提示 —— 那种情况本来就没有这个字段可用。
      */
-    const EXPECTED_REVISION = 4
+    const EXPECTED_REVISION = 6
 
     /**
      * 一次 API 调用。
@@ -287,6 +293,77 @@ window.__ModuleLoader__.load({
     }
 
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+    /**
+     * 「没有活动可领」的四种结局。
+     *
+     * 网关的 `classifyCheckinText` 把渠道包的中文结局归成 flags:
+     * `unsupported`(无签到接口)、`inactive`(未开启)、`manual`(需手动签到)、
+     * `failed`(失败)。界面上一律说成「活动未开启」,逐渠道原文留在 title 里。
+     */
+    const ACTIVITY_OFF_FLAGS = ['unsupported', 'inactive', 'manual', 'failed']
+
+    /** 这一行的 flags 是否属于「没有活动可领」。 */
+    function isActivityOff(row) {
+      const flags = Array.isArray(row?.flags) ? row.flags : []
+      return ACTIVITY_OFF_FLAGS.some(flag => flags.includes(flag))
+    }
+
+    /**
+     * 把「结果」那行按**逐渠道结局**重新拼一遍,而不是照抄渠道包的总结。
+     *
+     * 渠道包的原文(实测:`8 个渠道:5 个账号领取成功(+1400积分),1 个今天已领,
+     * 1 个失败,5 个渠道不支持签到`)只说它自己怎么归类 —— 把「上游把活动撤了」
+     * 和「真的出错了」写成一回事,于是 zcode/gemini/minimax 这几条每天看着像故障。
+     * 这里按 flags 归并:领到的报账号数与积分之和,其余统一算「活动未开启」。
+     *
+     * `channels` 为空(还没跑过、或旧记录)时退回渠道包原文,绝不凭空编。
+     */
+    function summarizeRun(state, fallback) {
+      const rows = Array.isArray(state?.channels) ? state.channels : []
+      const plain = typeof fallback === 'string' ? fallback : ''
+      if (rows.length === 0) return plain
+      const withFlag = flag => rows.filter(row => Array.isArray(row?.flags) && row.flags.includes(flag))
+      const claimed = withFlag('claimed-now')
+      const already = withFlag('claimed').filter(row => !claimed.includes(row))
+      const off = rows.filter(isActivityOff)
+      const total = claimed.reduce((sum, row) => {
+        const match = /([\d.]+)\s*积分/.exec(String(row.text ?? ''))
+        const value = match === null ? 0 : Number(match[1])
+        return sum + (Number.isFinite(value) ? value : 0)
+      }, 0)
+      const parts = []
+      if (claimed.length > 0) parts.push(`${claimed.length} 个账号领取成功${total > 0 ? `(+${formatNumber(total)} 积分)` : ''}`)
+      if (already.length > 0) parts.push(`${already.length} 个今天已领`)
+      if (off.length > 0) parts.push(`${off.length} 个渠道活动未开启`)
+      return parts.length === 0 ? plain : `${rows.length} 个渠道:${parts.join(',')}`
+    }
+
+    /**
+     * 这个模型是不是免费档(价格倍率 0)。
+     *
+     * 两路判据都认:`isFree` 是网关给的权威标记;名字/ID 里带 `x0.00` 或「免费」
+     * 是同一件事的文字形式(网关的 name 实测形如 `Hy3 · x0.00→免费`)。
+     * 之所以不只看 `isFree`,是因为实测有的行只带了名字里的倍率、标记缺失。
+     *
+     * 正则刻意只认 `0.0` / `0.00`:x0.05、x0.005 这类要留在原位。
+     */
+    function isFreeModel(model) {
+      if (model?.isFree === true) return true
+      const text = `${model?.name ?? ''} ${model?.id ?? ''}`
+      return /x\s*0*\.0{1,2}\b/.test(text) || text.includes('免费')
+    }
+
+    /**
+     * 模型列表排序:免费 / `x0.00` 的排最前面,其余**保持网关给的顺序**。
+     *
+     * `sort` 在 ES2019 起是稳定排序,所以"其余保持原序"不用额外记下标;
+     * 刻意不按价格整体升序 —— 用户要的是"免费的拎到最前",不是重排整张表。
+     */
+    function sortModels(rows) {
+      const list = Array.isArray(rows) ? [...rows] : []
+      return list.sort((left, right) => Number(isFreeModel(right)) - Number(isFreeModel(left)))
+    }
 
     /** 本机日期的 YYYY-MM-DD。用本地时区,与网关的 localDateKey 一致。 */
     function todayKey() {
@@ -373,20 +450,17 @@ window.__ModuleLoader__.load({
 .ofmc-root { display: flex; flex-direction: column; gap: 14px; font-size: 13px; color: var(--dsw-alias-label-primary); }
 .ofmc-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .ofmc-title { font-size: 15px; font-weight: 600; margin: 0; }
-.ofmc-card-title { font-weight: 600; }
 .ofmc-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .ofmc-card { background: var(--dsw-alias-settings-card-fill); border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
 .ofmc-label { color: var(--dsw-alias-label-primary-dimmed); min-width: 52px; display: inline-block; }
 .ofmc-muted { color: var(--dsw-alias-label-primary-dimmed); font-size: 12px; }
 .ofmc-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.ofmc-total { font-weight: 600; }
 .ofmc-btn { background: var(--dsw-alias-button-elevated-fill); border: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-primary); border-radius: 6px; padding: 5px 12px; font-size: 13px; cursor: pointer; }
 .ofmc-btn:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
 .ofmc-btn:disabled { opacity: 0.5; cursor: default; }
 .ofmc-btn-primary { background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground); border-color: transparent; font-weight: 600; }
 .ofmc-btn-primary:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }
 .ofmc-btn-small { padding: 2px 9px; font-size: 12px; }
-.ofmc-btn-done { color: var(--dsw-alias-label-primary-dimmed); }
 .ofmc-pill { border: 1px solid var(--dsw-alias-border-l2); border-radius: 999px; padding: 1px 8px; font-size: 12px; color: var(--dsw-alias-label-primary-dimmed); }
 .ofmc-pill-off { color: var(--dsw-alias-state-warn-primary); border-color: var(--dsw-alias-state-warn-primary); }
 .ofmc-switch { position: relative; width: 36px; height: 20px; border-radius: 999px; border: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-3); cursor: pointer; padding: 0; flex: none; }
@@ -424,6 +498,11 @@ window.__ModuleLoader__.load({
 .ofmc-minibtn:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
 .ofmc-minibtn:disabled { opacity: 0.5; cursor: default; }
 .ofmc-minibtn-danger { color: var(--dsw-alias-state-error-primary); }
+/* 模型行开关按钮:颜色跟着**按钮文案**走 —— 启用=淡绿、停用=淡红。
+   用 color-mix 把主题状态色兑淡成浅底(浅色/深色主题都自动成立);
+   不支持 color-mix 的老内核退回默认底色,文字与描边仍然带色。 */
+.ofmc-minibtn-enable { color: var(--dsw-alias-state-success-primary); border-color: color-mix(in srgb, var(--dsw-alias-state-success-primary) 45%, transparent); background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 14%, transparent); }
+.ofmc-minibtn-disable { color: var(--dsw-alias-state-error-primary); border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 45%, transparent); background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 14%, transparent); }
 .ofmc-tagpill { border-radius: 4px; padding: 0 5px; font-size: 11px; border: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-primary-dimmed); }
 .ofmc-tagpill-free { color: var(--dsw-alias-state-success-primary); border-color: var(--dsw-alias-state-success-primary); }
 .ofmc-tagpill-dead { color: var(--dsw-alias-state-error-primary); border-color: var(--dsw-alias-state-error-primary); }
@@ -481,6 +560,18 @@ window.__ModuleLoader__.load({
        * 若被 `claimed` 盖住,失败的那几个账号就再也没有入口了。
        */
       const flagSet = new Set(Array.isArray(flags) ? flags : [])
+      /**
+       * 卡片上那行结局文字。
+       *
+       * 渠道包的原文是它自己的措辞(「无签到接口」「需手动签到」「1 个失败」
+       * 「1 个未开启」),实测逐个打过上游:zcode 回「今日暂无可领额度(服务端按日刷新)」、
+       * gemini/cline/raccoon/workbuddy 根本没有签到接口、minimax 的响应里已经没有
+       * 有效的 claim_result —— 全都是**没有活动可领**,不是本机出错。
+       * 所以统一说「活动未开启」,渠道包原话挂到 title 上(悬停可见),一个字不丢。
+       */
+      const activityOff = ACTIVITY_OFF_FLAGS.some(flag => flagSet.has(flag))
+      const checkinLabel = activityOff ? T.stateInactiveShort : checkinText
+      // 悬停说明要等 `claimBlockedWhy` 算出来之后才拼得齐(见下面 checkinTitle)。
       const hasAccounts = accountsTotal > 0
       /**
        * `provider.status` 还没回来时,`accountsTotal` 是 0 —— 那**不代表**没有账号,
@@ -517,16 +608,27 @@ window.__ModuleLoader__.load({
           : signupState === 'manual' ? T.claimWhyManual
             : signupState === 'no-accounts' ? T.claimWhyNoAccounts
                 : ''
-      const claimLabel = signupState === 'claimed' ? T.claimed
-        : signupState === 'inactive' ? T.stateInactiveShort
-          : signupState === 'unsupported' ? T.stateUnsupportedShort
-            : signupState === 'manual' ? T.stateManualShort
-              : T.claimAll
+      /**
+       * 那行「活动未开启」的悬停说明 = 渠道包原话 + 这个渠道专属的原因。
+       *
+       * 领不到的渠道不再摆一个点不动的「活动未开启」按钮(用户要求:点不动就别放),
+       * 但按钮 tooltip 里那几句准确原因(无签到接口 / 需手动签到 / 活动未开启)
+       * 不能跟着一起消失 —— 挪到这里,信息量不变。
+       */
+      const checkinTitle = activityOff && checkinText !== ''
+        ? [T.activityOffWhy.replace('{raw}', checkinText), claimBlockedWhy].filter(Boolean).join(' ')
+        : ''
+      /**
+       * 按钮文字 —— 只有能点的状态才会渲染这个按钮,所以只剩两种。
+       *
+       * `已领取` 是多账号场景下的复查(渠道包有 `already-claimed` 预检兜底,不会重复发放);
+       * `失败` 走的是失败重试那条唯一入口。其余状态按钮根本不出现。
+       */
+      const claimLabel = signupState === 'claimed' ? T.claimed : T.claimAll
       // 已领取仍可点,但要说清楚"点了只是复查,不会重复发"。
-      const claimHint = claimBlockedWhy !== '' ? claimBlockedWhy
-        : signupState === 'claimed' ? T.claimedHint
-          : signupState === 'failed' ? T.claimRetryHint
-            : ''
+      const claimHint = signupState === 'claimed' ? T.claimedHint
+        : signupState === 'failed' ? T.claimRetryHint
+          : ''
 
       /**
        * 读账号列表。**同时返回数据** —— 续期后要立刻从里面取新的 `expiresAt`,
@@ -803,7 +905,10 @@ window.__ModuleLoader__.load({
           h('span', { className: 'ofmc-stat' }, `${creditsLabel(channel.id)} `,
             h('span', { className: 'ofmc-stat-num' }, balanceText)),
         ),
-        checkinText === '' ? null : h('div', { className: 'ofmc-muted' }, checkinText),
+        checkinLabel === '' ? null : h('div', {
+          className: 'ofmc-muted',
+          title: checkinTitle,
+        }, checkinLabel),
         h('div', { className: 'ofmc-acts' },
           h('button', {
             type: 'button', className: 'ofmc-btn ofmc-btn-small',
@@ -827,17 +932,19 @@ window.__ModuleLoader__.load({
             disabled: (busy !== '' && busy !== `${channel.id}:balance`) || offline,
             onClick: () => reloadBalance(),
           }, T.refreshBalance),
-          capability.claim === true ? h('button', {
+          claimable ? h('button', {
             type: 'button',
             /**
-             * 领不了的时候**置灰并说明原因**,而不是让用户白等一轮。
+             * 只有**真的能点**时才出现这个按钮。
              *
-             * 三种置灰各有不同理由(活动未开启 / 无签到接口 / 需手动签到),文案分开写,
-             * 否则用户只知道点不动、不知道去哪解决。已领过与失败仍可点:
-             * 前者是多账号场景下的复查,后者是失败重试的唯一入口。
+             * 领不到的渠道原来会摆一个置灰的按钮(写「活动未开启」),用户的要求是
+             * 别放点不动的东西 —— 原因已经在那行文字的悬停提示里,而且是分开写的
+             * (活动未开启 / 无签到接口 / 需手动签到),不会变成"只知道点不动、
+             * 不知道去哪解决"。已领过与失败仍可点:前者是多账号场景下的复查,
+             * 后者是失败重试的唯一入口。
              */
-            className: claimable ? 'ofmc-btn ofmc-btn-small' : 'ofmc-btn ofmc-btn-small ofmc-btn-done',
-            disabled: busy !== '' || offline || !claimable,
+            className: 'ofmc-btn ofmc-btn-small',
+            disabled: busy !== '' || offline,
             title: claimHint,
             onClick: claim,
           }, busy === `${channel.id}:claim` ? T.claiming : claimLabel) : null,
@@ -898,12 +1005,23 @@ window.__ModuleLoader__.load({
             }, `${T.modelEnableAll}(${modelDisabledCount})`),
           ),
           (models ?? []).length === 0 ? h('div', { className: 'ofmc-muted' }, T.noModels) : null,
-          (models ?? []).map(model => h('div', { key: model.id, className: 'ofmc-item' },
+          // 免费 / x0.00 的排最前(见 sortModels);其余保持网关顺序。
+          sortModels(models).map(model => h('div', { key: model.id, className: 'ofmc-item' },
             h('span', { className: 'ofmc-text', title: model.id }, model.name ?? model.id),
             model.isFree === true ? h('span', { className: 'ofmc-tagpill ofmc-tagpill-free' }, T.modelFree) : null,
             model.dead === true ? h('span', { className: 'ofmc-tagpill ofmc-tagpill-dead' }, T.modelDead) : null,
             h('button', {
-              type: 'button', className: 'ofmc-minibtn', disabled: busy !== '' || offline,
+              type: 'button',
+              /**
+               * 颜色给的是**按钮文案**:`启用`淡绿、`停用`淡红。
+               *
+               * ⚠️ 文案是"点了会怎样"(动作),不是当前状态 —— 已启用的模型显示的是
+               * 「停用」,所以列表里淡红占多数,这里的淡红含义是"点下去会关掉它"。
+               */
+              className: model.disabled === true
+                ? 'ofmc-minibtn ofmc-minibtn-enable'
+                : 'ofmc-minibtn ofmc-minibtn-disable',
+              disabled: busy !== '' || offline,
               onClick: () => toggleModel(model.id, model.disabled !== true),
             }, model.disabled === true ? T.modelOn : T.modelOff),
           )),
@@ -1059,8 +1177,8 @@ window.__ModuleLoader__.load({
        * 立刻把「当前可路由的模型」同步进 DSH 的配置(不等宿主那 1.2 秒防抖)。
        *
        * 用户改完模型启停后,DSH 的模型选择器**不会**自己变 —— 那里面是
-       * cordis.patch.yml 里的静态快照。点这个按钮能把配置对齐,但要让选择器
-       * 真的变,还是得重启 DSH。
+       * cordis.patch.yml 里的静态快照。点这个按钮能把配置对齐;配置文件一改
+       * 就被热应用,所以选择器**立刻**跟着变,不用重启 DSH。
        */
       const syncRouteNow = () => withBusy('route-sync', async () => {
         setNotice('')
@@ -1091,52 +1209,22 @@ window.__ModuleLoader__.load({
 
       const state = data?.autoCheckin ?? null
       /**
-       * 重试本轮失败的渠道。
+       * 「重试失败的渠道」按钮已移除(2026-10-21,应要求)。
        *
-       * 这是「整轮重跑」的**真实替代品**:整轮那条路被渠道包的按天闸挡住
-       * (`runIfDue` 今天跑过就直接返回,实测 0 秒空转、状态不变),而单渠道的
-       * `credits.claimAll` 是另一条路 —— 它会真的请求上游(实测 0.2s 有往返),
-       * 已领的返回 `already-claimed`,失败的会真的重试一次。
-       *
-       * 所以失败之后想再试,只有这里有用。
+       * 它唯一的用处是重跑本轮 failed 的渠道,而当时唯一的失败项 minimax 是
+       * **凭据失效**(连 refresh_token 都失效了),重试注定再失败 —— 留一个
+       * 注定失败的按钮不如没有。整轮重跑仍走上面那个签到按钮。
        */
-      const retryFailed = () => withBusy('retry-failed', async () => {
-        setNotice('')
-        const failedProviders = (Array.isArray(state?.channels) ? state.channels : [])
-          .filter(row => Array.isArray(row?.flags) && row.flags.includes('failed'))
-          .map(row => row.provider)
-        if (failedProviders.length === 0) { setNotice(T.retryNone); return }
-        const parts = []
-        for (const provider of failedProviders) {
-          try {
-            const value = await rpc('credits.claimAll', { provider })
-            const summary = value?.summary ?? value
-            const got = Number(summary?.claimed ?? 0)
-            const credit = Number(summary?.totalCredit ?? 0)
-            const failedRow = (value?.results ?? []).find(row => row?.outcome?.kind === 'failed')
-            parts.push(failedRow
-              ? `${provider}: ${failedRow.outcome.message}`
-              : `${provider}: ${got > 0 ? `+${credit}` : '已领'}`)
-          } catch (caught) {
-            parts.push(`${provider}: ${caught.message ?? String(caught)}`)
-          }
-        }
-        setNotice(T.retryFailedDone.replace('{summary}', parts.join(';')))
-        await loadEverything()
-      })
 
       const scheduler = data?.scheduler ?? null
       const enabled = state?.enabled === true
       const running = state?.running === true
       const signedToday = typeof state?.lastDate === 'string' && state.lastDate === todayKey()
-      /** 本轮失败的渠道数 —— 决定要不要露出「重试失败的渠道」。 */
-      const failedCount = (Array.isArray(state?.channels) ? state.channels : [])
-        .filter(row => Array.isArray(row?.flags) && row.flags.includes('failed')).length
       const channelRows = Array.isArray(state?.channels) ? state.channels : []
       const byProvider = new Map(channelRows.map(row => [row.provider, row]))
-      const summary = summarizeCredits(Object.values(balances))
+      /** 渠道头部连同「合计」一起去掉了;逐卡仍各自显示自己的余额(见 `creditsLabel`)。 */
 
-      const refreshAllBalances = () => withBusy('balances', loadBalances)
+      /** 逐渠道全量余额刷新已随渠道头部一起去掉;单卡上的「刷新余额」仍走 `reloadBalance`。 */
 
       async function runAll() {
         setBusy('all')
@@ -1275,7 +1363,7 @@ window.__ModuleLoader__.load({
            * cordis.patch.yml 里的**静态快照**,运行时不会去问网关。
            *
            * 所以这里把「上次同步成几个模型」明明白白写出来,并给一个立即同步的
-           * 按钮 —— 同步之后重启 DSH,选择器里就只剩真正可用的那些。
+           * 按钮 —— 同步之后选择器里立刻只剩真正可用的那些,不用重启。
            */
           !offline && h('div', { className: 'ofmc-card' },
             h('div', { className: 'ofmc-row' },
@@ -1313,17 +1401,6 @@ window.__ModuleLoader__.load({
                 title: signedToday ? T.rerunBlockedWhy : '',
                 onClick: runAll,
               }, busy === 'all' ? T.running : (signedToday ? T.rerunBlocked : T.run)),
-              /**
-               * 失败重试 —— 整轮被按天闸挡住之后,这是**唯一**真能再试的入口。
-               * 只在本轮确实有 failed 渠道时出现,平时不占地方。
-               */
-              failedCount > 0 ? h('button', {
-                type: 'button', className: 'ofmc-btn',
-                disabled: busy !== '' || offline,
-                title: T.retryFailedWhy,
-                onClick: retryFailed,
-              }, busy === 'retry-failed' ? T.claiming : `${T.retryFailed}(${failedCount})`) : null,
-              h('button', { type: 'button', className: 'ofmc-btn', disabled: loading, onClick: refresh }, T.refresh),
               running && h('span', { className: 'ofmc-pill' }, T.inFlight),
               signedToday && h('span', { className: 'ofmc-pill' }, T.signedToday),
             ),
@@ -1333,31 +1410,24 @@ window.__ModuleLoader__.load({
                 ? `${state.lastDate}${formatAt(state.lastAt) !== '' ? `(${formatAt(state.lastAt)})` : ''}`
                 : T.none,
             ),
-            h('div', null, h('span', { className: 'ofmc-label' }, T.result), state?.lastResult || T.none),
             h('div', null,
+              h('span', { className: 'ofmc-label' }, T.result),
+              // 按逐渠道结局重拼(见 summarizeRun);渠道包原话挂在 title 上备查。
+              h('span', { title: state?.lastResult ?? '' }, summarizeRun(state, state?.lastResult || T.none)),
+            ),
+            h('div', { title: T.why },
               h('span', { className: 'ofmc-label' }, T.schedule),
               scheduler?.at ? `每天 ${scheduler.at} 之后检查一次` : T.noSchedule,
             ),
             notice !== '' && h('div', { className: 'ofmc-ok' }, notice),
-            h('div', { className: 'ofmc-muted' }, T.why),
+            /**
+             * 这里原先还有一行灰色说明「网关的每日循环补上了渠道包缺的那一环…」。
+             * 它和上面「调度」那行说的是同一件事(只是多了实现缘由),已挪成那一行的
+             * 悬停提示(见上),正文不再重复占一行。
+             */
           ),
 
           h('div', { className: 'ofmc-card' },
-            h('div', { className: 'ofmc-head' },
-              h('div', { className: 'ofmc-row' },
-                h('span', { className: 'ofmc-card-title' }, `${T.channels}(${CHANNELS.length})`),
-                summary.accounts > 0 && h('span', { className: 'ofmc-stat' }, `${T.total} `,
-                  h('span', { className: 'ofmc-total' }, `${formatNumber(summary.total)} ${summary.units.join('/') || 'credits'}`)),
-              ),
-              h('div', { className: 'ofmc-row' },
-                h('span', { className: 'ofmc-muted' }, T.channelsHint),
-                h('button', {
-                  type: 'button', className: 'ofmc-btn ofmc-btn-small',
-                  disabled: busy !== '' || offline,
-                  onClick: refreshAllBalances,
-                }, busy === 'balances' ? T.balanceLoading : T.refreshBalance),
-              ),
-            ),
             statuses === null
               ? h('div', { className: 'ofmc-muted' }, offline ? T.gwWhy : (gateway.up === null ? T.loadingStatus : T.notReady))
               : null,
@@ -1402,7 +1472,7 @@ window.__ModuleLoader__.load({
     exports.apply = apply
     exports.__test = {
       Page, ChannelCard, CHANNELS, CREDITS, CSS, T, EXPECTED_REVISION,
-      todayKey, formatAt, formatNumber, describeAccount, summarizeCredits, describeClaim, creditsLabel,
+      todayKey, formatAt, formatNumber, describeAccount, summarizeCredits, summarizeRun, isActivityOff, sortModels, isFreeModel, describeClaim, creditsLabel,
     }
     return module.exports
   },

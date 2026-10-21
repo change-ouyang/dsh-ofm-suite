@@ -37,10 +37,10 @@ const BODY_LIMIT = 64 * 1024
  * 看到的 revision 比源码里的小,就说明该重启 DSH 了。省掉"我明明改了怎么没用"
  * 的那一轮排查。
  */
-export const REVISION = 4
+export const REVISION = 6
 
 /**
- * 网关可能放在哪几个目录。
+ * 网关启动脚本的候选路径。
  *
  * 刻意**不**只从 import.meta.url 往上推:插件在 profile 里是 Junction(或 file: 依赖),
  * 模块 URL 指向的是 ...\node_modules\dsh-ofm-checkin\index.js,而网关**不在**那旁边 ——
@@ -320,8 +320,36 @@ export function apply(ctx, config) {
   /** 同一时刻只允许一次启动尝试,避免连点开出一堆网关进程抢同一份渠道状态。 */
   let starting = null
 
+  /**
+   * 启动网关并等它应答 —— **幂等**:先探活,已经在跑就绝不 spawn 第二个
+   * (两个网关会各自起一个渠道 Worker、写同一份 `channel-pack/*.json`,
+   * 互相把对方的刷新令牌用掉)。
+   *
+   * 「点按钮」与「DSH 启动时自动拉起」共用这一份逻辑,所以两条路不会打架:
+   * 同一时刻只有一个 in-flight,后来的调用直接复用它的结果。
+   */
+  function startGatewayOnce() {
+    if (starting !== null) return starting
+    const run = (async () => {
+      const already = await callGateway('/checkin', undefined, 6_000)
+      if (already.status === 200) return { ok: true, already: true, via: null }
+      const launched = await launchGateway({ script: startScript, command: startCommand, cwd: startCwd })
+      if (launched.ok !== true) return { ok: false, error: launched.error }
+      const up = await waitForGateway(() => callGateway('/checkin', undefined, 6_000), startTimeoutMs)
+      return up
+        ? { ok: true, pid: launched.pid, via: launched.via }
+        : { ok: false, error: `启动命令已执行,但网关在 ${Math.round(startTimeoutMs / 1000)} 秒内没有应答 —— 看网关自己的日志(数据目录里的 gw.err)。`, via: launched.via }
+    })()
+    // 单飞守卫的复位必须放在赋值**之后**(同 runRouteSync 那段):run 在构造器里
+    // 就已结算时,若在内部复位会被下面这行盖回去,守卫会卡在一个旧 Promise 上。
+    starting = run
+    const release = () => { if (starting === run) starting = null }
+    run.then(release, release)
+    return run
+  }
+
   // -------------------------------------------------------------------------
-  // 模型列表自动同步(见 SYNC_SCRIPT_CANDIDATES 上面那段说明)
+  // 模型列表自动同步(见 syncScriptCandidates 上面那段说明)
   // -------------------------------------------------------------------------
   const syncScript = typeof config?.syncScript === 'string' && config.syncScript !== ''
     ? config.syncScript
@@ -467,7 +495,7 @@ export function apply(ctx, config) {
           // 版本戳:插件是宿主进程启动时加载的,改了文件不一定立刻生效。
           // 界面上看到 revision 还是旧值时,就说明**需要重启 DSH** 才会加载新代码。
           revision: REVISION,
-          // DSH 模型列表是快照(见 SYNC_SCRIPT_CANDIDATES 上面那段说明),这里回显
+          // DSH 模型列表是快照(见 syncScriptCandidates 上面那段说明),这里回显
           // 最近一次同步结果,界面用它提示「已同步 N 个模型,重启 DSH 后生效」。
           route: routeSync,
           routeSync: syncRouteModels,
@@ -499,21 +527,7 @@ export function apply(ctx, config) {
        * 幂等:已经在跑就直接回成功,只报告它已经在。
        */
       if (method === 'POST' && sub === '/start') {
-        const already = await callGateway('/checkin', undefined, 6_000)
-        if (already.status === 200) {
-          return send(res, 200, { ok: true, already: true, via: null })
-        }
-        if (starting === null) {
-          starting = (async () => {
-            const launched = await launchGateway({ script: startScript, command: startCommand, cwd: startCwd })
-            if (launched.ok !== true) return { ok: false, error: launched.error }
-            const up = await waitForGateway(() => callGateway('/checkin', undefined, 6_000), startTimeoutMs)
-            return up
-              ? { ok: true, pid: launched.pid, via: launched.via }
-              : { ok: false, error: `启动命令已执行,但网关在 ${Math.round(startTimeoutMs / 1000)} 秒内没有应答 —— 看网关自己的日志(数据目录里的 gw.err)。`, via: launched.via }
-          })().finally(() => { starting = null })
-        }
-        const result = await starting
+        const result = await startGatewayOnce()
         return send(res, result.ok === true ? 200 : 502, result)
       }
 
@@ -595,4 +609,41 @@ export function apply(ctx, config) {
     const server = scoped.webServer
     scoped.effect(() => server.register({ kind: 'prefix', path: PREFIX, handler: route }), 'ofm-checkin: api routes')
   })
+
+  // ---------------------------------------------------------------------------
+  // DSH 启动时自动拉起网关
+  // ---------------------------------------------------------------------------
+  /**
+   * 为什么默认开:网关不是 Windows 服务,计划任务/启动项/启动文件夹里都没有它,
+   * 所以「打开 DSH」并不会带起网关 —— 不自动拉起的话,每次开 DSH 之后 ofm 模型
+   * 都是「连接被拒」,要等用户自己想起来去点「启动网关」。
+   *
+   * 启动是幂等的(先探活),所以自动拉起与按钮点击、与手动 start.bat 都不会开出
+   * 第二个网关。
+   *
+   * 三条约束:
+   *   1. **不等待结果**。首次启动要加载 13 个渠道(实测数秒),不该拖住宿主加载。
+   *   2. **出错绝不能掀掉宿主**。launchGateway 只回结构化的 ok:false,
+   *      waitForGateway 有上限,这里再兜一层 catch。
+   *   3. 延后几秒,避开宿主启动那一堆初始化。
+   *
+   * 不想要就写 `autoStart: false`。
+   */
+  if (config?.autoStart !== false) {
+    const autoStartTimer = setTimeout(() => {
+      startGatewayOnce()
+        .then(result => {
+          if (result.ok === true) {
+            if (result.already !== true) ctx.logger?.info?.(`[ofm-checkin] 已随 DSH 启动自动拉起网关(pid ${result.pid})`)
+          } else {
+            ctx.logger?.warn?.(`[ofm-checkin] 随 DSH 启动自动拉起网关失败:${result.error}`)
+          }
+        })
+        .catch(error => {
+          ctx.logger?.warn?.(`[ofm-checkin] 随 DSH 启动自动拉起网关异常:${error?.message ?? String(error)}`)
+        })
+    }, 3_000)
+    // 别让这个定时器把进程拴住。
+    if (typeof autoStartTimer.unref === 'function') autoStartTimer.unref()
+  }
 }

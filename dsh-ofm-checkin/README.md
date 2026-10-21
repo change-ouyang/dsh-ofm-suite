@@ -392,6 +392,27 @@ dsh plugin --profile web add link:<克隆目录>/dsh-ofm-suite/dsh-ofm-checkin
         startScript: 'D:\path\to\dsh-ofm-free-gateway\start.bat'
 ```
 
+### 打开 DSH 时自动拉起网关
+
+宿主默认在 DSH 启动约 3 秒后**自动拉起网关**(配置键 `autoStart`,默认 `true`)。
+启动是幂等的 —— 先探活,已经在跑就绝不 spawn 第二个(两个网关会各自起一个渠道
+Worker、写同一份 `channel-pack/*.json`,互相把对方的刷新令牌用掉)。
+
+所以「打开 DSH 就能用 ofm 模型」,不必每次想起来去点「启动网关」。
+
+不想要自动拉起就关掉:
+
+```yaml
+- insert:
+    - id: ofm-checkin
+      name: 'dsh-ofm-checkin'
+      config:
+        autoStart: false
+```
+
+关掉后只保留「启动网关」按钮的手动启动。`startCommand` / `startTimeoutMs` /
+`syncRouteModels` 的说明见 `cordis.patch.yml` 顶部的注释。
+
 ### 卸载 / 回滚
 
 ```powershell
