@@ -44,13 +44,27 @@ WASM 的第三方开发者的本机 Rust 构建路径（如 `/Users/<name>/.carg
 这些路径**无法在不破坏二进制的前提下修改**，它们不是本仓库作者的路径，
 也不构成任何凭证或隐私信息。WASM 的使用受其所在目录的 MIT 许可覆盖。
 
+### 关于 GitHub 的密钥扫描告警（预期内，属误报）
+
+本仓库推送后，GitHub 的密钥扫描会在 `channels/business.mjs` 报出一条
+**Tencent WeChat API App ID**（`wx18d60be432287cf8`）告警。这是误报：
+
+- 它是微信开放平台「网站应用」的 **AppID**，不是密钥 —— AppID 本身会出现在授权 URL
+  的查询串里（`?appid=...`），按设计就是公开的；
+- 它来自 Loomy 客户端 `.env.prod` 的 `LOOMY_WECHAT_APP_ID`，上游
+  `vendor/channel-pack/src/loomy-wechat.ts:33` 同样是明文；
+- 配对的 **AppSecret 不存在于本仓库的任何文件里**（已全量搜索确认）。
+
+保留它是为了让 Loomy 渠道的微信扫码登录保持可用。仓库管理员可在
+<https://github.com/change-ouyang/dsh-ofm-suite/security/secret-scanning>
+把该告警以 "False positive" 关闭。
+
 ---
 
 ## 四、商标与第三方素材
 
 各服务商标（如华为云、腾讯、字节跳动、阿里、Google、智谱等）归各自权利人所有。
 本仓库仅用于调用这些服务提供的公开接口，与这些公司无隶属或背书关系。
-
 
 ---
 
