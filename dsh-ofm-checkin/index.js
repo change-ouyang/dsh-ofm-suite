@@ -37,7 +37,7 @@ const BODY_LIMIT = 64 * 1024
  * 看到的 revision 比源码里的小,就说明该重启 DSH 了。省掉"我明明改了怎么没用"
  * 的那一轮排查。
  */
-export const REVISION = 6
+export const REVISION = 7
 
 /**
  * 网关启动脚本的候选路径。
@@ -213,13 +213,30 @@ function explain(error) {
 }
 
 /**
+ * 把错误值统一成**一句字符串**。
+ *
+ * 网关的业务错误可能是对象(`{message,type,code}`,OpenAI 风格),绝不能原样
+ * 透传给界面 —— 浏览器半身把它当 React 子节点渲染时会直接抛
+ * "Objects are not valid as a React child",整个设置分区崩溃成空白
+ * (2026-10-22 实测:网关换了密钥回 401,页面就成了白板)。
+ */
+export function errorMessage(value, fallback = '') {
+  if (typeof value === 'string') return value === '' ? fallback : value
+  const message = value?.message
+  if (typeof message === 'string' && message !== '') return message
+  if (value === null || value === undefined) return fallback
+  const text = String(value)
+  return text === '' || text === '[object Object]' ? fallback : text
+}
+
+/**
  * 「网关没跑」的判据 —— 界面靠这个把「先启动网关」与「网关在跑但出错了」分开。
  *
  * 只有连接层失败（`callGateway` 把网络异常统一成 503 + `error`）才算没跑；
  * 网关自己回的业务错误必须原样呈现，不能被误判成需要启动。
  */
 export function isGatewayDown(body) {
-  const message = String(body?.error ?? '')
+  const message = errorMessage(body?.error)
   return /网关没有运行|与网关的连接被重置|无法连接|ECONNREFUSED|ECONNRESET|fetch failed/i.test(message)
 }
 
@@ -239,9 +256,16 @@ export function isGatewayDown(body) {
  *   2. **cwd 必须存在**。cwd 不存在时报的错是 `spawn <exe> ENOENT`,看起来像
  *      "找不到 cmd.exe",极难排查。所以先验证 cwd,不合法就交给 Node 用默认工作目录。
  *
+ *   3. **dataDir 必须跟着走**(2026-10-22 实测踩坑)。start.bat 在没有参数与
+ *      OFM_HOME 时,默认用「网关目录旁的 .ofm-free-gateway」当数据目录 —— 而插件
+ *      读密钥按的是 config.dataDir。两边一旦不一致,网关在错误目录里生成一份新
+ *      密钥,插件拿旧密钥全部 401,界面整页报错。所以配置了 dataDir 时,把它作为
+ *      `--data-dir` 参数传给 start.bat(start.bat 原生解析),并同时设 OFM_HOME,
+ *      让 server.mjs 与所有脚本都落在同一份目录上。
+ *
  * 返回 {ok, pid, via, error};ok:false 时 error 可直接显示给用户。
  */
-export function launchGateway({ script, command, cwd }) {
+export function launchGateway({ script, command, cwd, dataDir }) {
   // cwd 不存在会导致上面第 2 条那种误导性的 ENOENT,先挡掉。
   let workdir = cwd
   try {
@@ -253,10 +277,18 @@ export function launchGateway({ script, command, cwd }) {
     return Promise.resolve({ ok: false, error: `找不到网关启动脚本:${script}` })
   }
 
+  const home = typeof dataDir === 'string' && dataDir !== '' ? dataDir : undefined
+
   // .bat/.cmd 必须经 cmd.exe;直接 spawn 会 EINVAL。
   const isBatch = !useCommand && /\.(bat|cmd)$/i.test(script)
   const file = useCommand ? command : (isBatch ? (process.env.ComSpec || 'cmd.exe') : script)
-  const args = useCommand ? [] : (isBatch ? ['/c', script] : [])
+  // --data-dir 只对「脚本」这一路追加:start.bat 与 server.mjs 都原生解析它。
+  // startCommand 是用户拼好的整条命令,不往里塞参数(env 里的 OFM_HOME 仍会生效)。
+  const args = useCommand
+    ? []
+    : isBatch
+      ? (home !== undefined ? ['/c', script, '--data-dir', home] : ['/c', script])
+      : (home !== undefined ? ['--data-dir', home] : [])
 
   return new Promise(resolve => {
     let child
@@ -266,6 +298,7 @@ export function launchGateway({ script, command, cwd }) {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
+        ...(home !== undefined ? { env: { ...process.env, OFM_HOME: home } } : {}),
         ...(useCommand ? { shell: true } : {}),
       })
     } catch (error) {
@@ -333,7 +366,7 @@ export function apply(ctx, config) {
     const run = (async () => {
       const already = await callGateway('/checkin', undefined, 6_000)
       if (already.status === 200) return { ok: true, already: true, via: null }
-      const launched = await launchGateway({ script: startScript, command: startCommand, cwd: startCwd })
+      const launched = await launchGateway({ script: startScript, command: startCommand, cwd: startCwd, dataDir })
       if (launched.ok !== true) return { ok: false, error: launched.error }
       const up = await waitForGateway(() => callGateway('/checkin', undefined, 6_000), startTimeoutMs)
       return up
@@ -489,7 +522,9 @@ export function apply(ctx, config) {
           up: probe.status === 200,
           gatewayUrl,
           status: probe.status,
-          error: probe.status === 200 ? null : (probe.body?.error ?? `HTTP ${probe.status}`),
+          // error 必须是字符串或 null:网关回的业务错误(如 401 的 {message,...})
+          // 经 errorMessage 归一;界面把任何对象当子节点渲染都会掀桌。
+          error: probe.status === 200 ? null : errorMessage(probe.body?.error, `HTTP ${probe.status}`),
           startable: startCommand !== '' || fs.existsSync(startScript),
           startScript: startCommand !== '' ? startCommand : startScript,
           // 版本戳:插件是宿主进程启动时加载的,改了文件不一定立刻生效。
@@ -594,7 +629,7 @@ export function apply(ctx, config) {
         if (result.status === 200 && result.body?.ok === true) {
           return send(res, 200, { autoCheckin: result.body.value?.autoCheckin ?? null })
         }
-        const reason = result.body?.error?.message ?? result.body?.error ?? '网关拒绝了这次开关'
+        const reason = errorMessage(result.body?.error, '网关拒绝了这次开关')
         return send(res, result.status === 200 ? 502 : result.status, { error: reason })
       }
 

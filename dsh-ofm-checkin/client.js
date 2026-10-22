@@ -251,7 +251,7 @@ window.__ModuleLoader__.load({
      * 而不是让人对着旧行为怀疑自己改错了。宿主没上报 revision(旧版本)时按 null 处理,
      * 也就不提示 —— 那种情况本来就没有这个字段可用。
      */
-    const EXPECTED_REVISION = 6
+    const EXPECTED_REVISION = 7
 
     /**
      * 一次 API 调用。
@@ -267,10 +267,13 @@ window.__ModuleLoader__.load({
       })
       const body = await response.json().catch(() => null)
       if (!response.ok) {
-        const error = new Error(body?.error ?? `HTTP ${response.status}`)
+        // 错误一律归一成字符串:body.error 可能是对象(OpenAI 风格 401),
+        // new Error(对象) 的 message 会变成 "[object Object]",没法看也没法归类。
+        const message = asText(body?.error, `HTTP ${response.status}`)
+        const error = new Error(message)
         error.status = response.status
         // 只有连接层失败才算离线:网关自己回的业务错误(401/400/502)必须原样报出来。
-        error.offline = response.status === 503 && isOfflineMessage(body?.error)
+        error.offline = response.status === 503 && isOfflineMessage(message)
         throw error
       }
       return body
@@ -279,6 +282,22 @@ window.__ModuleLoader__.load({
     /** 与宿主 `isGatewayDown` 同一套措辞 —— 两处一起改,否则判定会漂移。 */
     function isOfflineMessage(message) {
       return /网关没有运行|与网关的连接被重置|无法连接|ECONNREFUSED|ECONNRESET|fetch failed/i.test(String(message ?? ''))
+    }
+
+    /**
+     * 任何错误值 → 一句字符串。对象(如 401 的 `{message,...}`)取 `message`。
+     *
+     * 这是「整页空白」教训的兜底:2026-10-22 实测,网关换了密钥后宿主把 401 的
+     * error **对象**透传进来,渲染时它被当作 React 子节点,React 抛
+     * "Objects are not valid as a React child",整个设置分区被卸载 —— 导航还在,
+     * 点进去却什么都没有。凡是要进 state 再渲染的错误,先过这里。
+     */
+    function asText(value, fallback = '') {
+      if (typeof value === 'string') return value === '' ? fallback : value
+      if (typeof value?.message === 'string' && value.message !== '') return value.message
+      if (value === null || value === undefined) return fallback
+      const text = String(value)
+      return text === '' || text === '[object Object]' ? fallback : text
     }
 
     /** 通用渠道 RPC。宿主刻意不解包信封,所以这里按 `ok` 判定,并把 code 带出来。 */
@@ -1057,14 +1076,16 @@ window.__ModuleLoader__.load({
             up: health?.up === true,
             startable: health?.startable === true,
             startScript: health?.startScript ?? '',
-            error: health?.up === true ? '' : (health?.error ?? ''),
+            // error 必须是字符串 —— 它会被直接当 React 子节点渲染,
+            // 混进对象就会掀翻整个分区(见 asText 的注释)。
+            error: health?.up === true ? '' : asText(health?.error, '网关应答异常'),
             revision: typeof health?.revision === 'number' ? health.revision : null,
             // 最近一次「模型列表同步到 DSH 配置」的结果,由宿主回显。
             route: health?.route ?? null,
           })
           return health?.up === true
         } catch (caught) {
-          setGateway({ up: false, startable: false, startScript: '', error: caught.message ?? String(caught), revision: null, route: null })
+          setGateway({ up: false, startable: false, startScript: '', error: asText(caught.message ?? caught, '无法访问宿主接口'), revision: null, route: null })
           return false
         }
       }, [])
@@ -1317,7 +1338,7 @@ window.__ModuleLoader__.load({
            */
           offline && h('div', { className: 'ofmc-error' },
             h('div', { className: 'ofmc-error-title' }, T.gwTitle),
-            gateway.error !== '' ? h('div', { className: 'ofmc-error-text' }, gateway.error) : null,
+            gateway.error !== '' ? h('div', { className: 'ofmc-error-text' }, String(gateway.error)) : null,
             h('div', { className: 'ofmc-muted' }, T.gwWhy),
             h('div', { className: 'ofmc-row' },
               gateway.startable
