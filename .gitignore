@@ -1,14 +1,19 @@
 # ==========================================
 # 运行时数据 / 凭据：绝不入库
 #
-# 网关的凭据仓库（channel-credentials.json）与运行状态
-# 默认写在**仓库旁的** .ofm-free-gateway/ 目录，但若有人用
-# --data-dir . 把数据目录指到仓库里，这些忽略项就是最后一道防线。
+# 本机把网关数据目录统一放到了仓库旁的 .ofm-free-gateway/（即仓库根下这个同名目录），
+# 里面 channel-credentials.json、settings.json、dsh-backup/** 全是真实凭据，
+# 而本仓库是 public —— 所以整个目录直接忽略，别指望按文件名兜底（备份目录会漏）。
+# 下面那批按文件名的规则保留，作为「有人把 --data-dir 指进仓库更深处」的最后一道防线。
 # ==========================================
+.ofm-free-gateway/
 channel-credentials.json
 channel-credentials.json.bak-*
 settings.json
+credentials.yaml
 channel-pack/
+channel-pack-state.json
+dsh-backup/
 gw.pid
 gw.out.log
 gw.err.log
